@@ -1,0 +1,11 @@
+Metadata-Version: 1.2
+Name: rplidar
+Version: 0.0.1
+Summary: Tools to use and rplidar
+Home-page: UNKNOWN
+Author: Ben Lewis
+Author-email: ben.lws12@gmail.com
+License: UNKNOWN
+Description: Designed and tested for the Rplidar A1
+Platform: UNKNOWN
+Requires-Python: >=3.6
