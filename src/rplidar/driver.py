@@ -23,7 +23,7 @@ class Command:
 
 class ConfigEntry:
     """
-    Commands for querying the device
+    Commands for querying the device configuration
     """
     count = 0x70
     us_per_sample = 0x71
@@ -215,7 +215,13 @@ class RpLidarA1(object):
 
     def start_scan(self, force=False):
         """
-        Starts scanning in standard scan mode
+        RPLIDAR will enter the scanning state once it receives this request. Each measurement sample result will be sent
+        out using an individual data response packet. If the RPLIDAR has been in scanning state already, it will stop
+        the current measurement and start a new round of scanning.
+        The related response descriptor will be sent out immediately once it receives the request and accepts it. The
+        data response packets related to every measurement sample results will be sent out continuously only after
+        the motor rotation becomes stable. RPLIDAR will leave the scanning state once it receives a new request or it
+        detects something is wrong.
 
         Args:
             force (bool): Start scanning in force mode
@@ -250,11 +256,9 @@ class RpLidarA1(object):
         Attempts to decode whatever is in the scan buffer into standard scan packets
 
         Args:
-            sync (bool): Wait for a new scan
+            sync (bool): Wait for the start of a new scan
         """
-        # find the start of a scan packet by checking the first three bytes
         timeout_time = time.time() + 5
-        # use a queue to synchronise the packet
         packet = deque(maxlen=5)
         for i in list(self.read(5)):
             packet.append(i)
@@ -262,13 +266,14 @@ class RpLidarA1(object):
             start_bit = packet[0] & 0x01
             inv_start_bit = (packet[0] & 0x02) >> 1
             cs = packet[1] & 0x01
-            if start_bit in [0, 1] and inv_start_bit in [0, 1]:
-                # check packet synchronisation using the first three bits
-                if start_bit == (not inv_start_bit) and cs == 1:
-                    break
+            # check packet synchronisation using the first three bits
+            if (start_bit ^ inv_start_bit) & cs == 0x01:
+                break
             packet.append(self.read()[0])
         else:
             raise RuntimeError("Failed to synchronise scan data")
+
+        #TODO: implement the rest of this function
 
         # we have successfully synced with the scan data. Read the read of the available bytes
         start_bit = packet[0] & 0x01
@@ -367,45 +372,3 @@ class RpLidarA1(object):
 
     def _get_scan_mode_name(self):
         raise NotImplementedError
-
-    def scan_single(self):
-        """
-        RPLIDAR will enter the scanning state once it receives this request. Each measurement sample result will be sent
-        out using an individual data response packet. If the RPLIDAR has been in scanning state already, it will stop
-        the current measurement and start a new round of scanning.
-        The related response descriptor will be sent out immediately once it receives the request and accepts it. The
-        data response packets related to every measurement sample results will be sent out continuously only after
-        the motor rotation becomes stable. RPLIDAR will leave the scanning state once it receives a new request or it
-        detects something is wrong.
-        """
-        self._set_motor_state(True)
-        self.log.debug("Regular scan mode")
-        self.request(cmd=0x20)
-        self._check_response_descriptor(ResponseType.ScanData)
-        self.z = []
-        self.r = []
-        while True:
-            data = self.read(5)
-            sb, q, a, d = self._parse_legacy_scan_measurement(data)
-            if sb == 1:
-                if d > 0:
-                    self.z.append(a)
-                    self.r.append(d)
-                print(sb, q, a, d)
-                break
-        while True:
-            data = self.read(5)
-            sb, q, a, d = self._parse_legacy_scan_measurement(data)
-            print(sb, q, a, d)
-            if d > 0:
-                self.z.append(a)
-                self.r.append(d)
-            if sb == 1:
-                break
-        self.stop()
-
-
-
-
-
-
