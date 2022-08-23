@@ -5,6 +5,7 @@ import sys
 import time
 from collections import deque
 import math
+import numpy as np
 
 class Command:
     """
@@ -33,7 +34,7 @@ class ConfigEntry:
     name = 0x7f
 
 
-class ResponseType:
+class DataType:
     """
     The last (7th) byte of each response descriptor
     """
@@ -155,7 +156,7 @@ class RpLidarA1(object):
         cs = 0 ^ 0xA5 ^ cmd ^ len(data) ^ reduce(lambda i, j: i ^ j, data)
         return cs
 
-    def _check_response_descriptor(self, descriptor, timeout=5):
+    def _get_response_descriptor(self):
         """
         Waits for the check byte (0xa5) then checks the identity of the 6th byte against `descriptor`
         Args:
@@ -165,19 +166,18 @@ class RpLidarA1(object):
             RuntimeError if the response does not match the target descriptor
 
         """
-        timeout_time = time.time() + timeout
-        while time.time() < timeout_time:
-            if self.read()[0] == 0xa5:
-                break
-        else:
-            raise RuntimeError('Failed to read response check byte in {}s'.format(timeout))
+        response = {}
+        _raw = int.from_bytes(self.read(7), byteorder='little')
+        response['start_flag_1'] = (_raw & 0x000000000000FF)
+        response['start_flag_2'] = (_raw & 0x0000000000FF00) >> 0x8
+        response['data_length'] = (_raw & 0x003FFFFFFF0000) >> 0x10
+        response['send_mode'] = (_raw & 0x00C00000000000) >> 0x2E
+        response['data_type'] = (_raw & 0xFF000000000000) >> 0x30
 
-        # read the remaining six bytes
-        raw_descriptor = self.read(6)
-        if raw_descriptor[0] != 0x5a:
+        if (response['start_flag_1'] != 0xA5) or (response['start_flag_2'] != 0x5A):
             raise RuntimeError('Response descriptor header not found')
-        if raw_descriptor[5] != descriptor:
-            raise RuntimeError("Response descriptor does not match target descriptor")
+
+        return response
 
     def _set_motor_state(self, state):
         """
@@ -233,7 +233,9 @@ class RpLidarA1(object):
         cmd = [Command.Scan, Command.ForceScan][force]
         self._set_motor_state(True)
         self.request(cmd)
-        self._check_response_descriptor(ResponseType.ScanData)
+        descriptor = self._get_response_descriptor()
+        if descriptor['data_type'] != DataType.ScanData:
+            raise RuntimeError("Invalid response descriptor data type")
 
     def start_express_scan(self):
         """
@@ -251,55 +253,37 @@ class RpLidarA1(object):
         self.stop()
         self._set_motor_state(False)
 
-    def read_scan_data(self, sync=False):
+    def scan_data(self):
         """
-        Attempts to decode whatever is in the scan buffer into standard scan packets
-
-        Args:
-            sync (bool): Wait for the start of a new scan
+        Generates points to a scan
         """
-        timeout_time = time.time() + 5
-        packet = deque(maxlen=5)
-        for i in list(self.read(5)):
-            packet.append(i)
-        while time.time() < timeout_time:
-            start_bit = packet[0] & 0x01
-            inv_start_bit = (packet[0] & 0x02) >> 1
-            cs = packet[1] & 0x01
-            # check packet synchronisation using the first three bits
-            if (start_bit ^ inv_start_bit) & cs == 0x01:
-                break
-            packet.append(self.read()[0])
-        else:
-            raise RuntimeError("Failed to synchronise scan data")
+        # Need to read data in chuncks. Reading the buffer 5 bytes at a time is too slow
+        # and will cause the buffer to overflow. 
+        chunk_size = 250
+        scan = []
+        while True:
+            # Read chunk
+            data = self.read(chunk_size)
+            # Process chunk in increments of 5 bytes
+            for i in range(0, chunk_size, 5):
+                _raw = int.from_bytes(data[i:i+5], byteorder='little')
+                sample = {}
+                sample['start_bit'] = (_raw & 0x0000000001)
+                sample['inv_start_bit'] = (_raw & 0x0000000002) >> 0x01
+                sample['quality'] = (_raw & 0x00000000FC) >> 0x02
+                sample['check_bit'] = (_raw & 0x0000000100) >> 0x08
+                sample['angle_q6'] = (_raw & 0x0000FFFE00) >> 0x09
+                sample['angle'] = sample['angle_q6'] / 64.0
+                sample['distance_q2'] = (_raw & 0xFFFF000000) >> 0x18
+                sample['distance'] = sample['distance_q2'] / 4.0
 
-        #TODO: implement the rest of this function
-
-        # we have successfully synced with the scan data. Read the read of the available bytes
-        start_bit = packet[0] & 0x01
-        if sync:
-            while start_bit != 1:
-                packet = self.read(5)
-                start_bit = packet[0] & 0x01
-        count = 1
-        quality = (packet[0] & 0xFC) >> 2
-        angle_q6 = (packet[2] << 7) | (packet[1] & 0xFE) >> 1
-        distance_q2 = (packet[4] << 8) | packet[3]
-        angle = float(angle_q6) / 64.0
-        distance = float(distance_q2) / 4.0
-        print("{} {}deg {}mm".format(quality, angle, distance))
-        start_bit = 0
-        while start_bit != 1:
-            count += 1
-            packet = self.read(5)
-            start_bit = packet[0] & 0x01
-            quality = (packet[0] & 0xFC) >> 2
-            angle_q6 = (packet[2] << 7) | (packet[1] & 0xFE) >> 1
-            distance_q2 = (packet[4] << 8) | packet[3]
-            angle = float(angle_q6) / 64.0
-            distance = float(distance_q2) / 4.0
-            print("{} {}deg {}mm".format(quality, angle, distance))
-        print(count)
+                # Only save quality points
+                if (sample['quality'] > 0) and (sample['distance'] > 10):
+                    scan.append(sample)
+                # Yield the points when a start bit is encountered
+                if sample['start_bit']:
+                    yield scan[:-1]
+                    scan = [scan[-1]] 
 
     def read_express_scan_data(self):
         pass
@@ -309,8 +293,11 @@ class RpLidarA1(object):
         Retrieves device specific information
         """
         self.request(Command.GetInfo)
-        self._check_response_descriptor(ResponseType.DeviceInfo)
-        info = self.read(20)
+        descriptor = self._get_response_descriptor()
+        if descriptor['data_type'] != DataType.DeviceInfo:
+            raise RuntimeError("Invalid response descriptor data type")
+
+        info = self.read(descriptor['data_length'])
         info_string = "\nModel: {}\nFirmware version: {}.{}\nHardware version: {}\nSerial number: {}".format(
             info[0], info[1], info[2], info[3], info[4:].hex()
         )
@@ -325,8 +312,10 @@ class RpLidarA1(object):
             status: The health status code
         """
         self.request(Command.GetHealth)
-        self._check_response_descriptor(ResponseType.HealthInfo)
-        health = self.read(3)
+        descriptor = self._get_response_descriptor()
+        if descriptor['data_type'] != DataType.HealthInfo:
+            raise RuntimeError("Invalid response descriptor data type")
+        health = self.read(descriptor['data_length'])
         status = health[0]
         status_str = ['good', 'warning', 'error'][status]
         error_code = (health[2] << 8) | health[1]
@@ -348,8 +337,10 @@ class RpLidarA1(object):
 
         """
         self.request(Command.GetSampleRate)
-        self._check_response_descriptor(ResponseType.SampleRate)
-        rate = self.read(4)
+        descriptor = self._get_response_descriptor()
+        if descriptor['data_type'] != DataType.SampleRate:
+            raise RuntimeError("Invalid response descriptor data type")
+        rate = self.read(descriptor['data_length'])
         t_standard = (rate[1] << 8) | rate[0]
         t_express = (rate[3] << 8) | rate[2]
         self.log.debug("T_standard: {}uS. T_express: {}uS)".format(t_standard, t_express))

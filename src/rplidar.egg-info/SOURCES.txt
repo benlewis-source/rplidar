@@ -1,6 +1,0 @@
-README.md
-setup.py
-src/rplidar.egg-info/PKG-INFO
-src/rplidar.egg-info/SOURCES.txt
-src/rplidar.egg-info/dependency_links.txt
-src/rplidar.egg-info/top_level.txt
