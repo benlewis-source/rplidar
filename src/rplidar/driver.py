@@ -61,8 +61,10 @@ class RpLidarA1(object):
             timeout=2.0
         )
 
-        logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
         self.log = logging.getLogger('rplidar')
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setLevel(logging.DEBUG)
+        self.log.addHandler(stream_handler)
 
         self.reset()
         device_info = self.com.read_all().decode()

@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import logging
 
-logging.getLogger().setLevel(logging.ERROR)
-logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
+logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger('matplotlib').setLevel(logging.INFO)
 
 
 def update_plot(frame, *fargs):
