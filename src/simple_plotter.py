@@ -7,13 +7,14 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import logging
 
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.ERROR)
+logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 
 
 def update_plot(frame, *fargs):
     if not len(frame):
         return
-    theta = np.array([pt['angle'] * 0.0174533 for pt in frame])
+    theta = np.array([pt['radian'] for pt in frame])
     r = np.array([pt['distance'] / 1000 for pt in frame])
 
     ax.cla()

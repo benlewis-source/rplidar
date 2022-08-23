@@ -164,7 +164,6 @@ class RpLidarA1(object):
 
         Raises:
             RuntimeError if the response does not match the target descriptor
-
         """
         response = {}
         _raw = int.from_bytes(self.read(7), byteorder='little')
@@ -237,15 +236,6 @@ class RpLidarA1(object):
         if descriptor['data_type'] != DataType.ScanData:
             raise RuntimeError("Invalid response descriptor data type")
 
-    def start_express_scan(self):
-        """
-        Start scanning in express mode
-        """
-        self.log.info("Entering express scan mode")
-        self._set_motor_state(True)
-        self.request(Command.ExpressScan, [0]*5)
-        self._check_response_descriptor(ResponseType.ExpressScanLegacy)
-
     def stop_scan(self):
         """
         Stops the motor and exits the current scan mode
@@ -255,10 +245,10 @@ class RpLidarA1(object):
 
     def scan_data(self):
         """
-        Generates points to a scan
+        Generates points of a scan as a list of dictionaries
         """
-        # Need to read data in chuncks. Reading the buffer 5 bytes at a time is too slow
-        # and will cause the buffer to overflow. 
+        # Need to read data in chuncks. Reading the buffer 5 bytes at a time 
+        # is too slow and will cause the buffer to overflow. 
         chunk_size = 250
         scan = []
         while True:
@@ -274,6 +264,7 @@ class RpLidarA1(object):
                 sample['check_bit'] = (_raw & 0x0000000100) >> 0x08
                 sample['angle_q6'] = (_raw & 0x0000FFFE00) >> 0x09
                 sample['angle'] = sample['angle_q6'] / 64.0
+                sample['radian'] = sample['angle'] * math.pi / 180
                 sample['distance_q2'] = (_raw & 0xFFFF000000) >> 0x18
                 sample['distance'] = sample['distance_q2'] / 4.0
 
@@ -284,9 +275,6 @@ class RpLidarA1(object):
                 if sample['start_bit']:
                     yield scan[:-1]
                     scan = [scan[-1]] 
-
-    def read_express_scan_data(self):
-        pass
 
     def get_device_info(self):
         """
