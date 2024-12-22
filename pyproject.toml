@@ -1,0 +1,15 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "rplidar"
+version = "0.0.3"
+description = "Tools to use and rplidar"
+authors = ["Ben Lewis <ben.lws12@gmail.com>"]
+license = "MIT"  # You can adjust the license if needed
+include = ["src/*"]
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+pyserial = "*"
